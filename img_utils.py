@@ -32,6 +32,7 @@ import numpy as np
 
 import scipy.ndimage as nd
 import scipy.interpolate as interp
+import matplotlib.pyplot as plt
 
 np.seterr(divide='ignore', invalid='ignore')
 
@@ -336,7 +337,6 @@ def mls_rigid_transform(v, p, q, alpha=1.0):
     w = 1.0 / np.sum((p_ij - v_ij)**2, axis=2)**alpha
     w_ij = w[:,:,None]
     sum_w = np.sum(w, axis=0)
-    #sum_w_ij = sum_w[None,:,None]
 
     # centroids
     p_star = (w_ij * p_ij).sum(0) / sum_w[:,None] # shape (m,2)
@@ -347,59 +347,82 @@ def mls_rigid_transform(v, p, q, alpha=1.0):
     q_hat_ij = q_ij - q_star_ij
 
     # similarity transform solved matrix
-    p_hat_ij_x = np.zeros_like(p_hat_ij)
-    # from paper: (_x) is an operator on 2D vectors such that (x, y) = (−y, x).
-    p_hat_ij_x[:,:,0] = -p_hat_ij[:,:,1]
-    p_hat_ij_x[:,:,1] = p_hat_ij[:,:,0]
+    p_hat_ij_uT = np.zeros_like(p_hat_ij)
+    # from paper: (_uT) is an operator on 2D vectors such that (x, y) = (−y, x).
+    p_hat_ij_uT[:,:,0] = -p_hat_ij[:,:,1]
+    p_hat_ij_uT[:,:,1] = p_hat_ij[:,:,0]
     v_minus_p_star = v_ij - p_star_ij
-    v_minus_p_star_x = np.zeros_like(v_minus_p_star)
-    v_minus_p_star_x[:,:,0] = -v_minus_p_star[:,:,1]
-    v_minus_p_star_x[:,:,1] = v_minus_p_star[:,:,0]
+    v_minus_p_star_uT = np.zeros_like(v_minus_p_star)
+    v_minus_p_star_uT[:,:,0] = -v_minus_p_star[:,:,1]
+    v_minus_p_star_uT[:,:,1] = v_minus_p_star[:,:,0]
+    # transform matrix, shape (n,m,2,2)
     A_ij = w_ij[:,:,:,None] * np.matmul(\
-            np.concatenate((p_hat_ij[:,:,:,None], -p_hat_ij_x[:,:,:,None]), axis=3),
-            np.concatenate((v_minus_p_star[:,:,:,None], -v_minus_p_star_x[:,:,:,None]), axis=3).transpose(0,1,3,2),
-            )
+            np.concatenate((p_hat_ij[:,:,:,None], -p_hat_ij_uT[:,:,:,None]), axis=3),
+            np.concatenate((v_minus_p_star[:,:,:,None], -v_minus_p_star_uT[:,:,:,None]), axis=3).transpose(0,1,3,2))
 
     # f_r, shape (m,2)
     f_bar_r = np.matmul(q_hat_ij[:,:,None,:], A_ij).sum(0).reshape(m,2)
     v_minus_p_star = v_minus_p_star.reshape(m,2)
-    f_r = np.sqrt((v_minus_p_star**2).sum(1))[:,None] * f_bar_r / np.sqrt((f_bar_r**2).sum(0))[:,None] + q_star
+    f_r = np.sqrt((v_minus_p_star**2).sum(1))[:,None] * f_bar_r / np.sqrt((f_bar_r**2).sum(1))[:,None] + q_star
 
     return f_r
 
-def create_swirl_deltas(img_shape, warp_rs):
+def _make_delta_plot(grid_points, deltas=None, scl=3, figno=2):
+    if deltas is None:
+        deltas = np.zeros_like(grid_points)
+    d = deltas
+    msz = 12
+    plt.figure(figno); plt.clf()
+    plt.scatter(grid_points[:,0], grid_points[:,1], c='g', s=msz, marker='.')
+    plt.quiver(grid_points[:,0], grid_points[:,1], d[:,0], d[:,1],
+               angles='xy', scale_units='xy', scale=scl, color='k')
+    min_grid = grid_points.min(0) - 2
+    max_grid = grid_points.max(0) + 2
+    plt.xlim([min_grid[0], max_grid[0]])
+    plt.ylim([min_grid[1], max_grid[1]])
+    plt.gca().invert_yaxis()
+    plt.gca().set_aspect('equal')
+    #plt.axis('off')
+
+def create_swirl_deltas(img_shape, warp_r):
     spacing = np.pi/(min(img_shape)/2.5)
-    nimages = len(warp_rs)
 
     #x,y = np.mgrid[:img_shape[0]:50,:img_shape[1]:50]
-    x,y = np.meshgrid(np.linspace(0,img_shape[0]-1,img_shape[0]//20),
-                      np.linspace(0,img_shape[1]-1,img_shape[1]//20))
+    y,x = np.meshgrid(np.linspace(0,img_shape[0]-1,img_shape[1]//20),
+                      np.linspace(0,img_shape[1]-1,img_shape[0]//20))
     x = x.flat[:]; y = y.flat[:]
     xc = x - x.mean(0); yc = y - y.mean(0)
     pts = np.concatenate((x[:,None], y[:,None]), axis=1)
 
-    deltas = [None]*nimages
-    for i in range(nimages):
-        deltas[i] = warp_rs[i]*np.concatenate((np.sin(yc*spacing)[:,None], -np.sin(xc*spacing)[:,None]), axis=1)
+    deltas = warp_r*np.concatenate((np.sin(yc*spacing)[:,None], -np.sin(xc*spacing)[:,None]), axis=1)
+    # _make_delta_plot(pts, deltas, scl=1.)
+    # plt.show()
 
     return pts, deltas
 
 def warp_image_remap_interp(img, pts, deltas):
-    img_shape = img.shape
+    img_shape = img.shape[:2]
+    nchans = 1 if img.ndim==2 else img.shape[2]
     # img_dtype = img.dtype
 
     # create a series of warped images
-    grid_x, grid_y = np.indices((img_shape[0], img_shape[1]), dtype=np.double)
+    grid_y, grid_x = np.indices((img_shape[0], img_shape[1]), dtype=np.double)
 
     vx = interp.griddata(pts, deltas[:,0], (grid_x, grid_y), fill_value=0., method='cubic')
     vy = interp.griddata(pts, deltas[:,1], (grid_x, grid_y), fill_value=0., method='cubic')
-    coords = [vx+grid_x, vy+grid_y]
-    image = nd.map_coordinates(img, coords, order=1, mode='constant', cval=0.0, prefilter=False)
+    coords = [vy+grid_y, vx+grid_x]
+    if nchans == 1:
+        image = nd.map_coordinates(img, coords, order=1, mode='constant', cval=0.0, prefilter=False)
+    else:
+        image = [None]*nchans
+        for i in range(nchans):
+            image[i] = nd.map_coordinates(img[:,:,i], coords, order=1, mode='constant', cval=0.0, prefilter=False)
+        image = np.concatenate([x[:,:,None] for x in image], axis=2)
 
-    rdeltas = -deltas
-    vx = interp.griddata(pts, rdeltas[:,0], (grid_x, grid_y), fill_value=0., method='cubic')
-    vy = interp.griddata(pts, rdeltas[:,1], (grid_x, grid_y), fill_value=0., method='cubic')
-    coords = [vx+grid_x, vy+grid_y]
-    rimage = nd.map_coordinates(image, coords, order=1, mode='constant', cval=0.0, prefilter=False)
+    return image
 
-    return image, rimage
+def make_hex_xy(size_x,size_y,scale):
+    x,y = np.mgrid[0:size_x,0:size_y]*1.0
+    x[:,1::2] += 0.5; y *= np.sqrt(3)/2
+    x = x.flat[:]; y = y.flat[:]
+    return x*scale,y*scale
