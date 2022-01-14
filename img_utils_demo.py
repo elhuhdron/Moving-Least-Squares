@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 #from img_utils import mls_affine_deformation, mls_similarity_deformation
 from img_utils import mls_rigid_deformation
 from img_utils import mls_rigid_transform, create_swirl_deltas, warp_image_remap_interp
-from img_utils import make_hex_xy #, _make_delta_plot
+from img_utils import make_hex_xy, _make_delta_plot
 
 p_mr_big = np.array([
     [30, 155], [125, 155], [225, 155],
@@ -121,7 +121,7 @@ def demo4(fn, name, p, q):
     y,x = make_hex_xy(img_shp[0]//scl, img_shp[1]/scl, scl)
     v = np.concatenate((x[:,None], y[:,None]), axis=1)
     # print(v.max(0), v.min(0), v.shape)
-    # _make_delta_plot(v, figno=1010)
+    _make_delta_plot(v, figno=1010)
 
     # compute transform in the reverse direction because
     #   the remap uses the reverse direction (dst image -> src image).

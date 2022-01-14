@@ -32,7 +32,10 @@ import numpy as np
 
 import scipy.ndimage as nd
 import scipy.interpolate as interp
+from scipy.interpolate import RBFInterpolator
 import matplotlib.pyplot as plt
+
+import time
 
 np.seterr(divide='ignore', invalid='ignore')
 
@@ -400,16 +403,31 @@ def create_swirl_deltas(img_shape, warp_r):
 
     return pts, deltas
 
-def warp_image_remap_interp(img, pts, deltas):
+def warp_image_remap_interp(img, pts, deltas, use_TPS=False):
     img_shape = img.shape[:2]
     nchans = 1 if img.ndim==2 else img.shape[2]
     # img_dtype = img.dtype
 
     # create a series of warped images
-    grid_y, grid_x = np.indices((img_shape[0], img_shape[1]), dtype=np.double)
+    #grid_y, grid_x = np.indices((img_shape[0], img_shape[1]), dtype=np.double)
+    grid_pts = np.mgrid[:img_shape[0],:img_shape[1]]
+    grid_pts = grid_pts[::-1,:,:]
+    grid_x = grid_pts[0,:,:]; grid_y = grid_pts[1,:,:]
 
-    vx = interp.griddata(pts, deltas[:,0], (grid_x, grid_y), fill_value=0., method='cubic')
-    vy = interp.griddata(pts, deltas[:,1], (grid_x, grid_y), fill_value=0., method='cubic')
+    if not use_TPS:
+        print('Interpolating with griddata'); t = time.time()
+        vx = interp.griddata(pts, deltas[:,0], (grid_x, grid_y), fill_value=0., method='cubic')
+        vy = interp.griddata(pts, deltas[:,1], (grid_x, grid_y), fill_value=0., method='cubic')
+        print('\tdone in %.4f s' % (time.time() - t, ))
+    else:
+        print('Interpolating with TPS'); t = time.time()
+        xflat = grid_pts.reshape(2,-1).T
+        #n = None # all points as neighbors
+        n = 7
+        vx = RBFInterpolator(pts, deltas[:,0], kernel='thin_plate_spline', neighbors=n)(xflat).reshape(grid_x.shape)
+        vy = RBFInterpolator(pts, deltas[:,1], kernel='thin_plate_spline', neighbors=n)(xflat).reshape(grid_y.shape)
+        print('\tdone in %.4f s' % (time.time() - t, ))
+
     coords = [vy+grid_y, vx+grid_x]
     if nchans == 1:
         image = nd.map_coordinates(img, coords, order=1, mode='constant', cval=0.0, prefilter=False)
